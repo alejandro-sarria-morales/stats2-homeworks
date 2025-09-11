@@ -1,0 +1,163 @@
+---
+title: "Problem Set 2: Research questions and estimands"
+author: "Alejandro Sarria"
+date: "`r Sys.Date()`"
+format: pdf
+execute-dir: project
+---
+
+## 1. Simulate the data
+
+```{r}
+#| message: false
+#| warning: false
+#| echo: false
+
+library(tidyverse)
+set.seed(1)
+```
+
+
+```{r}
+set.seed(1)
+
+delta <- 5
+N <- 100
+beta_0 <- 10
+beta_1 <- 1.1
+
+#quiz 1 scores
+q1_scores <- rnorm(N, mean = 65, sd = 3)
+
+#errors
+u0 <- rnorm(N, mean = 0, sd = 1)
+u1 <- rnorm(N, mean = 0, sd = 1)
+
+#potential outcomes
+y0 <- beta_0 + beta_1 * q1_scores + u0
+y1 <- beta_0 + beta_1 * q1_scores + delta + u1
+
+#assign treatment
+treatment <- sample(c(rep(0, N/2), rep(1, N/2)))
+
+#outcome
+y_obs <- ifelse(treatment == 1, y1, y0)
+
+df <- data.frame(
+  student_id = 1:N,
+  quiz1 = q1_scores,
+  treatment = treatment,
+  y0 = y0,
+  y1 = y1,
+  y_obs = y_obs
+)
+
+head(df)
+```
+
+## 2. Interpretations
+
+(a) $\delta$: The effect of tutoring on the the scores of second quizzes across all students. In this scenario, a $\delta$ of 5 suggests that, on average, students that received tutoring after their first quiz scored 5 points more on the second quiz compared to students that did not.
+(b) $Y^0$ and $Y^1$ intercepts: The baseline quiz 2 score predicted when the quiz 1 score (x) is zero, before adding the treatment effect or error terms. That is, the lowest possible grade on quiz 2 without factoring negative errors. Given how quiz 1 scores are distributed, it is unlikely that any simulated student would obtain this grade on quiz 2.
+(c) $\beta_1$: The coefficient for quiz 1 scores on quiz 2 scores. That is, how much each additional point on quiz 1 affects the quiz 2 scores regardless of treatment. In this case, it is 1.1, meaning that each point on quiz 1 predicts an additional 1.1 points on quiz 2.
+
+## 3. The effect of tutoring on student performance
+
+(a) SATE and $\delta$
+
+```{r}
+SATE <- sum(y1-y0) / N
+print(SATE)
+```
+
+$SATE$ and $\delta$ are close but not identical because of the introduction of a small error term $u_1$ in the formulas for $y^0$ and $y^1$. Otherwise, they would be identical.
+
+(b) $\widehat{\text{SATE}}$
+
+```{r}
+SATE_hat <- mean(y_obs[treatment == 1]) - mean(y_obs[treatment == 0])
+print(SATE_hat)
+```
+
+The $\widehat{\text{SATE}}$ is different from $\delta$ and further off from it than $SATE$ because of the noise introduced in the calculation by sampling from the errors and the randomness of the treatment assignment.
+
+(c) $\widehat{\text{SATE}}$ distribution
+
+```{r}
+#| message: false
+#| warning: false
+SATEs <- c()
+
+for (i in 1:500) {
+  treatment <- sample(c(rep(0, N/2), rep(1, N/2)))
+  y_obs_temp <- ifelse(treatment == 1, y1, y0)
+  SATE_hat <- mean(y_obs_temp[treatment == 1]) - mean(y_obs_temp[treatment == 0])
+  SATEs <- c(SATEs, SATE_hat)
+}
+
+SATEs_mean <- mean(SATEs)
+SATEs_sd <- sd(SATEs)
+
+p <- ggplot() +
+  aes(SATEs) +
+  geom_histogram() +
+  geom_vline(xintercept=SATEs_mean, color='red') +
+  labs(title="Distribution of SATE estimations",
+       subtitle = "Difference of means") +
+  theme(plot.title = element_text(hjust=0.5),
+        plot.subtitle = element_text(hjust=0.5))
+p
+```
+```{r}
+#| message: false
+#| warning: false
+#| echo: false
+print(paste("Mean:", round(SATEs_mean, 3)))
+print(paste("Standard Deviation:", round(SATEs_sd, 3)))
+```
+
+
+(d) $\widehat{\text{SATE}}$ using regressions
+
+```{r}
+model_q1 <- lm(formula= y_obs ~ treatment + quiz1,
+               data = df)
+summary(model_q1)
+```
+
+```{r}
+model_no_q1 <- lm(formula= y_obs ~ treatment,
+               data = df)
+summary(model_no_q1)
+```
+
+The estimate using the quiz 1 scores (5.107) is closer to the true SATE (5.067) that the estimate from the model not using the scores (5.125). My guess for why this happens is that in the data generation process the quiz 2 scores are indeed a function quiz 1 scores. The model that does not contain these scores is not able to see that, so it overestimates the effect that the treatment had on the higher scores of quiz 2.
+
+(e) $\widehat{\text{SATE}}$ using regressions distribution
+
+```{r}
+dists <- c()
+
+for (i in 1:500) {
+  treatment <- sample(c(rep(0, N/2), rep(1, N/2)))
+  y_obs_temp <- ifelse(treatment == 1, y1, y0)
+  df_temp <- data.frame(treament = treatment,
+                        y_obs = y_obs_temp,
+                        quiz1 = q1_scores)
+  model_temp <- lm(formula = y_obs ~ treatment + quiz1,
+                   data = df_temp)
+  dists <- c(dists, coef(model_temp)[2])
+}
+
+p_reg <- ggplot() +
+  aes(dists) +
+  geom_histogram(binwidth=0.05) +
+  geom_vline(xintercept=mean(dists), color='red') +
+  labs(title="Distribution of SATE estimations",
+       subtitle = "Regression coefficient") +
+  theme(plot.title = element_text(hjust=0.5),
+        plot.subtitle = element_text(hjust=0.5))
+p_reg
+```
+
+Looking at the distributions, the regression method for estimating SATE is better than the difference in means method based on their range. The regression method has values around 4.5 and 5.5 while the difference in means method has values between 3 and 7, showing that the latter can output values way off the actual SATE. Making the regression method more reliable.
