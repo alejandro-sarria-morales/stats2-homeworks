@@ -1,0 +1,252 @@
+---
+title: "Problem Set 5: Multilevel Models"
+author: "Alejandro Sarria"
+format: pdf
+---
+
+## Preliminaries
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+library(tidyverse)
+library(here)
+library(lme4)
+library(scales)
+library(ggeffects)
+library(performance)
+d <- readRDS("ess5000.rds")
+```
+
+### 1.
+
+```{r}
+psych::describe(d) |> 
+  filter(vars == 3) |> 
+  mutate(variance = sd^2) |> 
+  select(mean, variance)
+```
+
+### 2.
+
+```{r}
+d |> 
+  ggplot(aes(x=ppltrst)) + 
+  geom_histogram(binwidth = 1, fill="steelblue", color="white") +
+  theme_minimal()
+```
+
+The modal value is 5.
+
+### 3.
+
+```{r}
+d |> 
+  ggplot(aes(x = ppltrst, fill = cntry)) +
+  geom_histogram(binwidth = 1, color = "white") +
+  facet_wrap(~cntry, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of ppltrst by country",
+    x = "Trust in people (ppltrst)",
+    y = ""
+  ) +
+  theme(legend.position = "none",
+        axis.text = element_text(size=5))
+```
+
+```{r}
+d |> 
+  group_by(cntry) |> 
+  summarise(mean = mean(ppltrst)) |> 
+  ggplot(aes(x=mean)) + 
+  geom_density(fill="steelblue", color="black", alpha=0.6) +
+  theme_minimal() +
+  labs(
+    title = "Distribution of ppltrst country means",
+    x = "Trust in people (ppltrst)",
+    y = ""
+  )
+```
+
+If we estimate the country means using partial pooling, the estimate of the means of countries with fewer people in the sample will be closer to the overall mean (~5). In some countries, this wont have much of an effect, but in cases like Albania, Cyprus and Iceland the estimated mean will be quite different from the sample mean.
+
+## Single Dimension
+
+### 4.
+
+```{r}
+m1 <- lmer(ppltrst ~ 1 + (1 | cntry),
+           data = d,
+           REML = FALSE)
+summary(m1)
+```
+
+### 5.
+```{r}
+icc <- 0.8744 / (0.8744 + 5.1737)
+icc
+```
+
+### 6.
+```{r}
+performance::icc(m1)
+```
+
+### 7. 
+
+An ICC of 0.145 can be interpreted as saying that 14.5% percent of the variance in ppltrst is explained by variation between countries, meaning that the resulting 76.5% of variance is explained by within country variation.
+
+### 8.
+
+```{r}
+m2 <- lm(ppltrst ~ 1,
+         data = d)
+summary(m2)
+```
+
+The mean estimate for the partially pooled model (4.9732) is not significantly different from the completely pooled model (4.8678). Suggesting that the complexity of random intercepts is not necessary in this case.
+
+### 9. 
+```{r, warning=FALSE}
+global_mean <- fixef(m1)["(Intercept)"]
+
+eb <- ranef(m1)$cntry |> 
+  rownames_to_column(var="cntry") |> 
+  rename(u_j = `(Intercept)`) |> 
+  mutate(partial_mean = global_mean + u_j)
+
+#highest mean
+eb |>
+  arrange(desc(partial_mean)) |> 
+  slice(1)
+
+#lowest mean
+eb |> 
+  arrange(partial_mean) |> 
+  slice(1)        
+```
+
+```{r, warning=FALSE}
+se <- attr(ranef(m1, condVar=TRUE)[[1]], "postVar")
+eb$se <- sqrt(se[1,1,])
+
+d |> 
+  group_by(cntry) |> 
+  summarise(no_pool_mean = mean(ppltrst)) |> 
+  inner_join(eb, by=join_by(cntry)) |> 
+  ggplot(aes(x=reorder(cntry, partial_mean))) +
+  geom_errorbar(aes(ymin = partial_mean - 1.96*se,
+                    ymax = partial_mean + 1.96*se),
+                width = 0.2) +
+  geom_point(aes(y=partial_mean),
+             color="orange") +
+  geom_errorbar(aes(ymin = partial_mean,
+                    ymax = no_pool_mean),
+                width = 0.01,
+                position = position_nudge(0.3),
+                color="red") +
+  geom_point(aes(y=no_pool_mean),
+             color="steelblue",
+             position=position_nudge(0.3)) +
+  theme_minimal() +
+  labs(
+    title = "Partial means v. No-pooled means",
+    x = "Country",
+    y = "Estimated means"
+  ) + 
+  theme(axis.text.x = element_text(size=7))
+```
+
+It was the case that the partial means of countries with a low n differed the most from the their no pooled estimates as they were estimated to be closer to the overall mean.
+
+## Two Dimensions
+
+### 10.
+
+```{r}
+d <- d |> 
+  mutate(eduyrs_scaled = rescale(eduyrs))
+
+m3 <- lmer(ppltrst ~ eduyrs_scaled + (1 | cntry),
+           data = d,
+           REML = FALSE)
+  
+summary(m3)
+```
+
+The maximum effect for education on ppltrst is 1.6403. That means that, for the average country, the most that education can increase trust is 1.6403.
+
+### 11.
+
+```{r}
+ggpredict(m3, terms=c("eduyrs_scaled", "cntry"), type="random") |> 
+  ggplot(aes(x = x , y = predicted , group = group, color = group )) +
+  geom_smooth(formula= y ~ x,
+              method = "lm",
+              alpha = .5, se=FALSE) +
+  theme_minimal() +
+  labs(title = "Predicted trust by education by country - no pooling",
+       y = "Predicted trust",
+       x = "Education (scaled)",
+       color = NULL) +
+  theme(
+    legend.position = "right",             
+    legend.text  = element_text(size = 7), 
+    legend.key.size = unit(0.4, "cm")
+  )
+
+```
+
+### 12
+
+```{r}
+m4 <- lmer(ppltrst ~ eduyrs_scaled + (eduyrs_scaled | cntry),
+           data = d,
+           REML = FALSE)
+
+ggpredict(m4, terms=c("eduyrs_scaled", "cntry"), type="random") |> 
+  ggplot(aes(x = x , y = predicted , group = group, color = group )) +
+  geom_smooth(formula= y ~ x,
+              method = "lm",
+              alpha = .5, se=FALSE)  +
+  theme_minimal() +
+  labs(title = "Predicted trust by education by country - random slopes",
+       y = "Predicted trust",
+       x = "Education (scaled)",
+       color = NULL) +
+  theme(
+    legend.position = "right",             
+    legend.text  = element_text(size = 7), 
+    legend.key.size = unit(0.4, "cm")
+  )
+
+```
+
+### 13
+
+```{r}
+compare_performance(m3, m4, metrics=c("BIC", "RMSE", "R2"))
+```
+
+The model without random slopes performs better. This means that the effect of education on trust does not vary significantly across countries.
+
+### 14
+
+```{r}
+d <- d |> 
+  mutate(agea_scaled = rescale(agea),
+         attend_scaled = rescale(attend),
+         health_scaled = rescale(health))
+
+m5 <- lmer(ppltrst ~ eduyrs_scaled + I(agea_scaled^2) + attend_scaled +
+             health_scaled + female + (1 | cntry),
+           data = d,
+           REML = FALSE)
+
+ggeffect(m5, terms="agea_scaled") |> 
+  plot() + 
+  labs(title = "Effect of age on trust",
+       y = "Predicted trust",
+       x = "Age (scaled)")
+  
+```
+
