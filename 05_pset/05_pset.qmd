@@ -237,7 +237,8 @@ d <- d |>
          attend_scaled = rescale(attend),
          health_scaled = rescale(health))
 
-m5 <- lmer(ppltrst ~ eduyrs_scaled + I(agea_scaled^2) + attend_scaled +
+m5 <- lmer(ppltrst ~ eduyrs_scaled + agea_scaled +
+             I(agea_scaled^2) + attend_scaled +
              health_scaled + female + (1 | cntry),
            data = d,
            REML = FALSE)
